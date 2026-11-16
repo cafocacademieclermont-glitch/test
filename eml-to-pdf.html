@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EML → PDF : fusionner des e-mails en un seul PDF</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 2rem 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #f6f7f9;
+  color: #1a1a1a;
+}
+main { width: 100%; max-width: 46rem; }
+h1 { font-size: 1.35rem; margin: 0 0 .5rem; }
+p.hint { margin: 0 0 1.25rem; color: #555; font-size: .92rem; }
+.drop {
+  border: 2px dashed #999;
+  border-radius: .75rem;
+  padding: 2.2rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  background: #fff;
+  transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: #2f6fed; background: rgba(47,111,237,.08); }
+.drop small { display: block; margin-top: .4rem; color: #777; }
+ul#fileList { list-style: none; margin: 1rem 0; padding: 0; }
+ul#fileList li {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  background: #fff;
+  border: 1px solid #e2e2e2;
+  border-radius: .5rem;
+  padding: .45rem .6rem;
+  margin-bottom: .4rem;
+  font-size: .9rem;
+}
+ul#fileList li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ul#fileList li .size { color: #777; font-size: .8rem; }
+ul#fileList li button { border: 0; background: none; cursor: pointer; font-size: 1rem; color: #b00; }
+.actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
+#generateBtn {
+  border: 0;
+  border-radius: .5rem;
+  padding: .6rem 1.2rem;
+  background: #2f6fed;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+#generateBtn:disabled { background: #9db8e8; cursor: not-allowed; }
+#status { font-size: .9rem; color: #444; }
+@media (prefers-color-scheme: dark) {
+  body { background: #16181d; color: #e8e8e8; }
+  p.hint { color: #aaa; }
+  .drop { background: #22252b; border-color: #666; }
+  .drop.over { border-color: #6ea8fe; background: rgba(110,168,254,.12); }
+  .drop small { color: #999; }
+  ul#fileList li { background: #22252b; border-color: #3a3f47; }
+  ul#fileList li .size { color: #999; }
+  #status { color: #bbb; }
+  #generateBtn:disabled { background: #3d5a94; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Fusionner des fichiers .eml en un seul PDF</h1>
+  <p class="hint">
+    100 % local : vos fichiers restent sur votre ordinateur, rien n'est envoyé sur Internet.
+    Seul le contenu texte des e-mails est repris dans le PDF (ni images, ni pièces jointes).
+    Le premier chargement nécessite une connexion Internet pour les librairies CDN.
+  </p>
+  <div id="drop" class="drop" role="button" tabindex="0" aria-label="Choisir des fichiers .eml">
+    Glissez-déposez vos fichiers .eml ici<br>ou cliquez pour les sélectionner
+    <small>Plusieurs fichiers peuvent être choisis d'un coup</small>
+    <input type="file" id="fileInput" accept=".eml,message/rfc822" multiple hidden>
+  </div>
+  <ul id="fileList"></ul>
+  <div class="actions">
+    <button id="generateBtn" disabled>Générer le PDF</button>
+    <span id="status" role="status"></span>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script>
+window.addEventListener('error', function () {
+  var s = document.getElementById('status');
+  if (s && !s.textContent) s.textContent = 'Échec du chargement d’une librairie CDN : vérifiez votre connexion Internet.';
+});
+</script>
+<script type="module">
+import PostalMime from 'https://cdn.jsdelivr.net/npm/postal-mime@2.7.6/+esm';
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const generateBtn = document.getElementById('generateBtn');
+const status = document.getElementById('status');
+
+let files = [];
+
+function addFiles(list) {
+  for (const f of Array.from(list)) {
+    if (/\.eml$/i.test(f.name) || f.type === 'message/rfc822') {
+      if (!files.some(x => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)) {
+        files.push(f);
+      }
+    }
+  }
+  renderList();
+}
+
+function renderList() {
+  fileList.innerHTML = '';
+  for (const f of files) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = f.name;
+    name.title = f.name;
+    const size = document.createElement('span');
+    size.className = 'size';
+    size.textContent = (f.size / 1024).toFixed(0) + ' Ko';
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.title = 'Retirer ce fichier';
+    del.addEventListener('click', () => {
+      files = files.filter(x => x !== f);
+      renderList();
+    });
+    li.append(name, size, del);
+    fileList.append(li);
+  }
+  generateBtn.disabled = files.length === 0;
+}
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+fileInput.addEventListener('change', () => {
+  addFiles(fileInput.files);
+  fileInput.value = '';
+});
+drop.addEventListener('dragover', e => {
+  e.preventDefault();
+  drop.classList.add('over');
+});
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('over');
+  addFiles(e.dataTransfer.files);
+});
+
+function htmlToText(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  div.querySelectorAll('script, style').forEach(el => el.remove());
+  return div.innerText || div.textContent || '';
+}
+
+async function readEmail(file) {
+  const buf = await file.arrayBuffer();
+  const mail = await new PostalMime().parse(buf);
+  let body = mail.text || '';
+  if (!body.trim() && mail.html) body = htmlToText(mail.html);
+  return {
+    subject: mail.subject || '(sans objet)',
+    from: mail.from || null,
+    to: mail.to || [],
+    cc: mail.cc || [],
+    date: mail.date || null,
+    body: body.replace(/\r\n?/g, '\n'),
+  };
+}
+
+const fmtAddr = a => (a && a.address) ? (a.name ? a.name + ' <' + a.address + '>' : a.address) : '';
+const fmtList = arr => (arr || []).map(fmtAddr).filter(Boolean).join(', ');
+function fmtDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !isNaN(d) ? d.toLocaleString('fr-FR') : 'date inconnue';
+}
+
+function winAnsi(s) {
+  return String(s).replace(/[^\t\n\r -\u007E\u00A0-\u00FF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/g, '?');
+}
+
+function buildPdf(emails) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 56;
+  const maxW = pageW - margin * 2;
+  let y = margin + 14;
+
+  const newPage = () => {
+    doc.addPage();
+    y = margin + 14;
+  };
+  const ensureSpace = h => {
+    if (y + h > pageH - margin) newPage();
+  };
+  const writeBlock = (text, size = 11, style = 'normal') => {
+    doc.setFont('helvetica', style);
+    doc.setFontSize(size);
+    const lineH = size * 1.45;
+    const lines = doc.splitTextToSize(winAnsi(text), maxW);
+    for (const ln of lines) {
+      if (y + lineH > pageH - margin) newPage();
+      doc.text(ln, margin, y);
+      y += lineH;
+    }
+  };
+  const rule = () => {
+    ensureSpace(24);
+    doc.setDrawColor(190);
+    doc.line(margin, y, pageW - margin, y);
+    doc.setDrawColor(0);
+    y += 16;
+  };
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text(winAnsi('Export d’e-mails'), margin, y);
+  y += 34;
+  writeBlock(emails.length + ' e-mail' + (emails.length > 1 ? 's' : '') + ' — généré le ' + new Date().toLocaleString('fr-FR'), 11);
+  y += 8;
+  rule();
+
+  emails.forEach((m, i) => {
+    ensureSpace(150);
+    if (i > 0) {
+      y += 10;
+      rule();
+    }
+    writeBlock('Objet : ' + m.subject, 14, 'bold');
+    y += 4;
+    writeBlock('De : ' + fmtAddr(m.from), 10);
+    writeBlock('À : ' + fmtList(m.to), 10);
+    if (m.cc.length) writeBlock('Cc : ' + fmtList(m.cc), 10);
+    writeBlock('Date : ' + fmtDate(m.date), 10);
+    y += 4;
+    rule();
+    writeBlock(m.body.trim() || '(contenu vide)', 11);
+    y += 12;
+  });
+
+  const total = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(130);
+    const label = 'Page ' + i + ' / ' + total;
+    doc.text(label, pageW - margin - doc.getTextWidth(label), pageH - 26);
+  }
+  doc.setTextColor(0);
+  return doc;
+}
+
+generateBtn.addEventListener('click', async () => {
+  if (!window.jspdf) {
+    status.textContent = 'Librairie PDF non chargée : vérifiez votre connexion Internet.';
+    return;
+  }
+  generateBtn.disabled = true;
+  status.textContent = '';
+  const parsed = [];
+  try {
+    for (let i = 0; i < files.length; i++) {
+      status.textContent = 'Lecture de ' + files[i].name + ' (' + (i + 1) + '/' + files.length + ')…';
+      await new Promise(r => setTimeout(r, 0));
+      try {
+        parsed.push(await readEmail(files[i]));
+      } catch (err) {
+        console.warn('Fichier ignoré : ' + files[i].name, err);
+      }
+    }
+    if (!parsed.length) {
+      status.textContent = 'Aucun fichier .eml valide.';
+      return;
+    }
+    status.textContent = 'Génération du PDF…';
+    await new Promise(r => setTimeout(r, 0));
+    const doc = buildPdf(parsed);
+    const name = 'export-emails-' + new Date().toISOString().slice(0, 10) + '.pdf';
+    doc.save(name);
+    status.textContent = 'PDF généré (' + parsed.length + ' e-mail' + (parsed.length > 1 ? 's' : '') + ') : ' + name;
+  } catch (err) {
+    console.error(err);
+    status.textContent = 'Erreur lors de la génération : ' + err.message;
+  } finally {
+    generateBtn.disabled = files.length === 0;
+  }
+});
+</script>
+</body>
+</html>
